@@ -1,13 +1,16 @@
 # src/keyframe_extractor.py
+import av
 import cv2
 import numpy as np
 import os
 from utils.utils import setup_logger
+
 logger = setup_logger(__name__)
 folder_path = "data/keyframes_folder"
 
 # Create the folder if it doesn't exist
 os.makedirs(folder_path, exist_ok=True)
+
 def compute_histogram(frame, hist_size=256):
     # Convert to HSV for better color distribution analysis if needed
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -17,50 +20,78 @@ def compute_histogram(frame, hist_size=256):
     return hist
 
 def extract_keyframes_histogram(video_path, threshold=0.5):
-    cap = cv2.VideoCapture(video_path)
+    """
+    Extract keyframes using a histogram comparison method.
+    A keyframe is extracted if the histogram correlation with the previous frame is below the threshold.
+    """
+    try:
+        container = av.open(video_path)
+    except Exception as e:
+        logger.error(f"Cannot open video: {video_path} with error: {e}")
+        return []
+
     keyframes = []
-    ret, prev_frame = cap.read()
-    if not ret:
+    frames = container.decode(video=0)
+    
+    # Attempt to get the first frame
+    try:
+        first_frame = next(frames)
+    except StopIteration:
         logger.error("No frames read from the video.")
+        container.close()
         return keyframes
 
+    prev_frame = first_frame.to_ndarray(format="bgr24")
     prev_hist = compute_histogram(prev_frame)
-    frame_index = 1  # starting index
-    keyframes.append((0, prev_frame))  # consider the first frame a keyframe
+    frame_index = 0
+    keyframes.append((frame_index, prev_frame))  # consider the first frame a keyframe
+    frame_index += 1
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        curr_hist = compute_histogram(frame)
+    for frame in frames:
+        curr_frame = frame.to_ndarray(format="bgr24")
+        curr_hist = compute_histogram(curr_frame)
         # Compute correlation between histograms
         score = cv2.compareHist(prev_hist, curr_hist, cv2.HISTCMP_CORREL)
         logger.debug(f"Frame {frame_index}: histogram correlation = {score}")
         # If the correlation is below a threshold, mark as a keyframe
         if score < threshold:
-            keyframes.append((frame_index, frame))
+            keyframes.append((frame_index, curr_frame))
             logger.info(f"Keyframe found at frame {frame_index} with score {score}")
         prev_hist = curr_hist
         frame_index += 1
-    cap.release()
+
+    container.close()
     return keyframes
+
 def extract_keyframes_diff(video_path, pixel_threshold=30, diff_threshold=50000):
-    cap = cv2.VideoCapture(video_path)
+    """
+    Extract keyframes using a difference-based method.
+    A keyframe is extracted if the sum of pixel differences between consecutive frames exceeds diff_threshold.
+    """
+    try:
+        container = av.open(video_path)
+    except Exception as e:
+        logger.error(f"Cannot open video: {video_path} with error: {e}")
+        return []
+
     keyframes = []
-    ret, prev_frame = cap.read()
-    if not ret:
+    frames = container.decode(video=0)
+    
+    # Attempt to get the first frame
+    try:
+        first_frame = next(frames)
+    except StopIteration:
         logger.error("No frames read from the video.")
+        container.close()
         return keyframes
 
-    frame_index = 1
+    prev_frame = first_frame.to_ndarray(format="bgr24")
     keyframes.append((0, prev_frame))  # starting frame as keyframe
+    frame_index = 1
 
-    while True:
-        ret, curr_frame = cap.read()
-        if not ret:
-            break
-
-        # Compute absolute difference
+    for frame in frames:
+        curr_frame = frame.to_ndarray(format="bgr24")
+        # Compute absolute difference between current and previous frames
         diff = cv2.absdiff(prev_frame, curr_frame)
         # Convert to grayscale and threshold the diff image
         gray_diff = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
@@ -75,26 +106,36 @@ def extract_keyframes_diff(video_path, pixel_threshold=30, diff_threshold=50000)
         prev_frame = curr_frame
         frame_index += 1
 
-    cap.release()
+    container.close()
     return keyframes
+
 def extract_keyframes_skip(video_path, skip_rate=1000):
-    cap = cv2.VideoCapture(video_path)
+    """
+    Extract keyframes by skipping a fixed number of frames.
+    """
+    try:
+        container = av.open(video_path)
+    except Exception as e:
+        logger.error(f"Cannot open video: {video_path} with error: {e}")
+        return []
+
     keyframes = []
     frame_index = 0
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
+    for frame in container.decode(video=0):
         if frame_index % skip_rate == 0:
-            keyframes.append((frame_index, frame))
+            curr_frame = frame.to_ndarray(format="bgr24")
+            keyframes.append((frame_index, curr_frame))
             logger.info(f"Frame {frame_index} captured via skipping.")
         frame_index += 1
 
-    cap.release()
+    container.close()
     return keyframes
+
 def extract_keyframes(video_path, method='histogram', **kwargs):
+    """
+    Dispatch function to extract keyframes using a specified method.
+    Supported methods: 'histogram', 'diff', 'skip'
+    """
     if method == 'histogram':
         return extract_keyframes_histogram(video_path, **kwargs)
     elif method == 'diff':

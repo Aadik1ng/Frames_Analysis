@@ -1,6 +1,6 @@
-# src/video_loader.py
+# utils/video_loader.py
 import cv2
-from src.utils import setup_logger
+from utils.utils import setup_logger
 
 logger = setup_logger(__name__)
 
